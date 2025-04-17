@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>SuperBotKulenna</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #111;
+            color: white;
+            text-align: center;
+            padding: 20px;
+        }
+        input, button {
+            padding: 10px;
+            margin: 5px;
+            font-size: 16px;
+            border-radius: 8px;
+            border: none;
+        }
+        #painel {
+            margin-top: 20px;
+            padding: 20px;
+            background-color: #222;
+            border-radius: 12px;
+            display: inline-block;
+            min-width: 300px;
+        }
+        .verde { color: #00ff00; }
+        .vermelho { color: #ff4444; }
+    </style>
+</head>
+<body>
+    <h1>SuperBotKulenna</h1>
+    <div id="painel">
+        <p>Token da Deriv:</p>
+        <input type="text" id="token" placeholder="Cole seu token aqui">
+
+        <p>Valor da entrada ($):</p>
+        <input type="number" id="stake" min="0.35" step="0.01" value="0.35">
+
+        <br><br>
+        <button onclick="conectar()">Conectar e Iniciar Bot</button>
+
+        <div id="status"></div>
+        <div id="sinal"></div>
+        <button id="botaoConfirmar" onclick="confirmarEntrada()" style="display:none">Confirmar Entrada</button>
+    </div>
+
+    <script>
+        let ws, token = '', autorizado = false, ultimoTick = null, ticks = [], mercado = 'R_100';
+
+        function conectar() {
+            token = document.getElementById('token').value.trim();
+            if (!token) return alert("Cole o token da Deriv primeiro.");
+
+            document.getElementById('status').innerHTML = 'Conectando à Deriv...';
+            ws = new WebSocket('wss://ws.deriv.com/websockets/v3');
+
+            ws.onopen = () => {
+                ws.send(JSON.stringify({ authorize: token }));
+            };
+
+            ws.onmessage = (msg) => {
+                const data = JSON.parse(msg.data);
+
+                if (data.msg_type === 'authorize') {
+                    autorizado = true;
+                    document.getElementById('status').innerHTML = '<span class="verde">Autorizado com sucesso!</span>';
+                    ws.send(JSON.stringify({ ticks: mercado }));
+                }
+
+                if (data.msg_type === 'tick') {
+                    processarTick(data.tick.quote);
+                }
+
+                if (data.msg_type === 'buy') {
+                    document.getElementById('status').innerHTML = '<span class="verde">Compra executada com sucesso!</span>';
+                }
+            };
+        }
+
+        function processarTick(preco) {
+            ticks.push(preco);
+            if (ticks.length > 10) ticks.shift();
+
+            if (ticks.length === 10) {
+                let subidas = 0, quedas = 0;
+                for (let i = 1; i < ticks.length; i++) {
+                    if (ticks[i] > ticks[i-1]) subidas++;
+                    else quedas++;
+                }
+
+                let assertividade = (Math.max(subidas, quedas) / 9) * 100;
+                let direcao = subidas > quedas ? 'rise' : 'fall';
+
+                if (assertividade >= 97) {
+                    document.getElementById('sinal').innerHTML = `
+                        Sinal detectado: <strong class="${direcao === 'rise' ? 'verde' : 'vermelho'}">
+                        ${direcao === 'rise' ? 'SUBIR' : 'CAIR'}</strong><br>
+                        Assertividade: ${assertividade.toFixed(2)}%
+                    `;
+                    document.getElementById('botaoConfirmar').style.display = 'inline-block';
+                    document.getElementById('botaoConfirmar').setAttribute('data-direcao', direcao);
+                }
+            }
+        }
+
+        function confirmarEntrada() {
+            const direcao = document.getElementById('botaoConfirmar').getAttribute('data-direcao');
+            const stake = parseFloat(document.getElementById('stake').value);
+            if (isNaN(stake) || stake < 0.35) return alert('Valor mínimo de entrada é $0.35');
+
+            const contrato = {
+                buy: 1,
+                price: stake,
+                parameters: {
+                    amount: stake,
+                    basis: 'stake',
+                    contract_type: direcao.toUpperCase(),
+                    currency: 'USD',
+                    duration: 5,
+                    duration_unit: 't',
+                    symbol: mercado
+                }
+            };
+
+            ws.send(JSON.stringify(contrato));
+            document.getElementById('sinal').innerHTML = 'Enviando operação...';
+            document.getElementById('botaoConfirmar').style.display = 'none';
+        }
+    </script>
+</body>
+</html>
